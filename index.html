@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DVD Bounce</title>
+  <title>DVD Arena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,53 +14,20 @@
 <!-- ── Menu overlay ── -->
 <div id="menu">
   <div id="menu-card">
+    <div class="card-corner card-tl"></div>
+    <div class="card-corner card-tr"></div>
+    <div class="card-corner card-bl"></div>
+    <div class="card-corner card-br"></div>
 
-    <div id="menu-eyebrow"></div>
-    <div id="menu-title">DVD</div>
+    <div id="menu-title-row">
+      <span id="menu-title">DVD ARENA</span>
+      <span id="menu-eyebrow"></span>
+    </div>
     <div id="menu-tagline"></div>
 
-    <div id="menu-panels">
-
-      <div id="panel-rules">
-        <div class="panel-heading">How to play</div>
-        <div class="rule">
-          <span class="rule-glyph">×</span>
-          <span>Wall bounce deals <span class="dmg-you">5 damage</span> to you</span>
-        </div>
-        <div class="rule">
-          <span class="rule-glyph">◆</span>
-          <span>Corner hit deals <span class="dmg-logo">1 damage</span> to the logo</span>
-        </div>
-        <div class="rule">
-          <span class="rule-glyph">↔</span>
-          <span>Drag the <strong>edges</strong> to reshape the arena</span>
-        </div>
-        <div class="rule">
-          <span class="rule-glyph">○</span>
-          <span>Each corner has a <strong>3s cooldown</strong> after being hit</span>
-        </div>
-      </div>
-
-      <div id="panel-right">
-        <div class="panel-heading">Stats</div>
-        <div id="stats-content"></div>
-
-        <div class="stat-divider"></div>
-        <div id="shop-wrap">
-          <div id="currency-row">
-            <span class="panel-heading" style="margin-bottom:0">FUNDS</span>
-            <span id="currency-val">◈ 0</span>
-          </div>
-          <button id="heal-btn" disabled>HEAL  +20 HP  —  ◈ 25</button>
-          <div class="panel-heading" id="shop-heading" style="margin-top:14px">CORNERS</div>
-          <div id="powerup-grid"></div>
-        </div>
-      </div>
-
-    </div>
+    <div id="menu-body"></div>
 
     <button id="menu-btn"></button>
-
   </div>
 </div>
 
@@ -75,6 +45,10 @@
 
 <!-- ── Canvas + handles ── -->
 <div id="canvas-wrap">
+  <div class="canvas-corner cc-tl" data-corner="tl"></div>
+  <div class="canvas-corner cc-tr" data-corner="tr"></div>
+  <div class="canvas-corner cc-bl" data-corner="bl"></div>
+  <div class="canvas-corner cc-br" data-corner="br"></div>
   <div id="canvas">
     <div class="corner-zone top-left"     data-corner="tl"></div>
     <div class="corner-zone top-right"    data-corner="tr"></div>
@@ -82,20 +56,11 @@
     <div class="corner-zone bottom-right" data-corner="br"></div>
     <div id="corner-flash"></div>
   </div>
-  <!-- Edge flash overlays — one per wall, siblings of canvas so they straddle the border -->
   <div class="edge-flash" data-edge="n"></div>
   <div class="edge-flash" data-edge="s"></div>
   <div class="edge-flash" data-edge="w"></div>
   <div class="edge-flash" data-edge="e"></div>
 
-  <div class="handle n"  data-dir="n"></div>
-  <div class="handle s"  data-dir="s"></div>
-  <div class="handle e"  data-dir="e"></div>
-  <div class="handle w"  data-dir="w"></div>
-  <div class="handle nw" data-dir="nw"></div>
-  <div class="handle ne" data-dir="ne"></div>
-  <div class="handle sw" data-dir="sw"></div>
-  <div class="handle se" data-dir="se"></div>
 </div>
 
 <!-- ── Logo (viewport-level) ── -->
@@ -113,22 +78,11 @@
 <!-- ── Player damage flash ── -->
 <div id="damage-vignette"></div>
 
-<!-- ── Death screen (pauses on kill, game visible behind it) ── -->
-<div id="death-screen" class="hidden">
-  <div id="death-panel">
-    <div id="death-panel-title">HP DEPLETED</div>
-    <div id="death-panel-sub"></div>
-    <button id="end-btn">End Run</button>
-  </div>
-</div>
-
 <!-- ── Player HP bar ── -->
 <div id="player-bar">
   <span id="player-label">YOU</span>
   <div id="player-hp-track"><div id="player-hp-fill"></div></div>
 </div>
-
-<div id="hint">drag edges · corner the logo to deal damage</div>
 
 <audio id="hit-sound" src="assets/sound/dvd_hit.wav" preload="auto"></audio>
 <script src="game.js"></script>

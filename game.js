@@ -4,7 +4,7 @@ const menuCard     = document.getElementById('menu-card');
 const menuEyebrow  = document.getElementById('menu-eyebrow');
 const menuTitle    = document.getElementById('menu-title');
 const menuTagline  = document.getElementById('menu-tagline');
-const statsContent = document.getElementById('stats-content');
+const menuBody     = document.getElementById('menu-body');
 const menuBtn      = document.getElementById('menu-btn');
 const wrap         = document.getElementById('canvas-wrap');
 const canvas       = document.getElementById('canvas');
@@ -16,13 +16,6 @@ const playerFill   = document.getElementById('player-hp-fill');
 const roundLabel   = document.getElementById('round-label');
 const countdownEl  = document.getElementById('countdown');
 const countdownNum = document.getElementById('countdown-num');
-const deathScreen  = document.getElementById('death-screen');
-const deathPanelSub = document.getElementById('death-panel-sub');
-const endBtn       = document.getElementById('end-btn');
-const currencyVal  = document.getElementById('currency-val');
-const healBtn      = document.getElementById('heal-btn');
-const shopWrap     = document.getElementById('shop-wrap');
-const powerupGrid  = document.getElementById('powerup-grid');
 
 const edgeFlashEls = {};
 document.querySelectorAll('.edge-flash[data-edge]').forEach(el => {
@@ -40,22 +33,22 @@ const BORDER        = 2;
 const BASE_SPEED    = 2;
 const COOLDOWN_MS   = 3000;
 const PLAYER_MAX_HP         = 100;
-const BASE_LOGO_HP          = 50;  // logo HP pool in round 1
-const LOGO_HP_PER_ROUND     = 20;  // added each round
-const BOUNCE_DAMAGE_MAX     = 5;   // player damage at dead-center wall hit
-const CORNER_DAMAGE_MIN     = 2;   // logo damage at the edge of the corner zone
+const BASE_LOGO_HP          = 50;
+const LOGO_HP_PER_ROUND     = 20;
+const BOUNCE_DAMAGE_MAX     = 5;
+const CORNER_DAMAGE_MIN     = 2;
 const SPEED_SCALE_PER_ROUND = 0.5;
 
 const CORNER_HITBOX_BASE  = 32;
 const CORNER_HITBOX_MAX   = 80;
-const CORNER_HITBOX_STEP  = 12;   // px per level
-const CORNER_DAMAGE_BASE  = 12;   // damage at level 1
-const CORNER_DAMAGE_STEP  = 3;    // damage per level
-const COST_HITBOX         = 20;   // currency
-const COST_DAMAGE         = 30;   // currency
-const COST_HEAL           = 25;   // currency per heal
-const HEAL_AMOUNT         = 20;   // HP restored
-const TOKEN_VALUE         = 15;
+const CORNER_HITBOX_STEP  = 12;
+const CORNER_DAMAGE_BASE  = 12;
+const CORNER_DAMAGE_STEP  = 3;
+const COST_HITBOX         = 20;
+const COST_DAMAGE         = 30;
+const COST_HEAL           = 25;
+const HEAL_AMOUNT         = 20;
+const TOKEN_VALUE         = 10;
 const TOKEN_LIFETIME      = 6000;
 const TOKEN_SPAWN_INTERVAL= 4500;
 const MAX_TOKENS          = 3;
@@ -95,15 +88,40 @@ function applyWrapGeometry() {
   wrap.style.top    = cTop    + 'px';
   wrap.style.width  = cWidth  + 'px';
   wrap.style.height = cHeight + 'px';
+  updateTokenVisibility();
+}
+
+function updateTokenVisibility() {
+  const left   = cLeft  + BORDER;
+  const right  = cLeft  + cWidth  - BORDER;
+  const top    = cTop   + BORDER;
+  const bottom = cTop   + cHeight - BORDER;
+  tokens.forEach(t => {
+    const inside = t.vx >= left && t.vx + 30 <= right &&
+                   t.vy >= top  && t.vy + 32 <= bottom;
+    t.el.style.visibility = inside ? '' : 'hidden';
+  });
 }
 
 // ── Per-corner cooldowns ──
 const cornerZoneEls = {};
 document.querySelectorAll('.corner-zone[data-corner]').forEach(el => {
   cornerZoneEls[el.dataset.corner] = el;
-  el.style.width  = CORNER_HITBOX_BASE + 'px';
-  el.style.height = CORNER_HITBOX_BASE + 'px';
 });
+
+const canvasCornerEls = {};
+document.querySelectorAll('.canvas-corner[data-corner]').forEach(el => {
+  canvasCornerEls[el.dataset.corner] = el;
+});
+
+function syncCornerSize(key) {
+  const s = cornerStats[key].hitbox;
+  cornerZoneEls[key].style.width    = s + 'px';
+  cornerZoneEls[key].style.height   = s + 'px';
+  canvasCornerEls[key].style.width  = s + 'px';
+  canvasCornerEls[key].style.height = s + 'px';
+}
+
 const cooldowns = { tl: 0, tr: 0, bl: 0, br: 0 };
 
 function cornerKey(hitLeft, hitRight, hitTop, hitBottom) {
@@ -130,7 +148,6 @@ function spawnToken() {
   const el = document.createElement('div');
   el.className = 'token';
 
-  // Viewport-fixed position within the current canvas area — unaffected by resizing
   const margin = 40;
   const posLeft = cLeft + BORDER + margin + Math.random() * (cWidth  - BORDER * 2 - margin * 2 - 30);
   const posTop  = cTop  + BORDER + margin + Math.random() * (cHeight - BORDER * 2 - margin * 2 - 32);
@@ -142,9 +159,7 @@ function spawnToken() {
     <div class="token-timer"><div class="token-timer-fill"></div></div>
   `;
 
-  // Shrink the timer bar over TOKEN_LIFETIME
   const fill = el.querySelector('.token-timer-fill');
-  // Force reflow before starting transition
   requestAnimationFrame(() => {
     fill.style.transition = `width ${TOKEN_LIFETIME}ms linear`;
     fill.style.width = '0%';
@@ -153,12 +168,13 @@ function spawnToken() {
   el.addEventListener('click', e => {
     e.stopPropagation();
     currency += TOKEN_VALUE;
-    updateCurrencyDisplay();
     removeToken(token);
   });
 
   const token = {
     el,
+    vx: posLeft,
+    vy: posTop,
     timeout: setTimeout(() => removeToken(token), TOKEN_LIFETIME),
   };
 
@@ -178,21 +194,64 @@ function clearAllTokens() {
   tokens = [];
 }
 
-// ── Currency display ──
-function updateCurrencyDisplay() {
-  if (currencyVal) currencyVal.textContent = '◈ ' + currency;
+// ── Key badge helper ──
+function keyBadge(label) {
+  return `<span class="key-badge">${label}</span>`;
 }
 
-// ── Shop render ──
-const CORNER_LABELS = { tl: 'TOP LEFT', tr: 'TOP RIGHT', bl: 'BOT LEFT', br: 'BOT RIGHT' };
-
+// ── Shop / between-rounds render ──
 function renderShop() {
-  updateCurrencyDisplay();
+  const totalSegs  = PLAYER_MAX_HP / 2;
+  const filledSegs = Math.round(playerHP / 2);
 
-  // Heal button
+  let segsHtml = '<div class="seg-hp-bar">';
+  for (let i = 0; i < totalSegs; i++) {
+    segsHtml += `<div class="seg${i < filledSegs ? ' on' : ''}"></div>`;
+  }
+  segsHtml += '</div>';
+
   const canHeal = currency >= COST_HEAL && playerHP < PLAYER_MAX_HP;
-  healBtn.disabled = !canHeal;
-  healBtn.onclick = () => {
+
+  const ICON_CLASS = { tl: 'ci-tl', tr: 'ci-tr', bl: 'ci-bl', br: 'ci-br' };
+
+  let cornersHtml = '<div id="powerup-grid">';
+  ['tl', 'tr', 'bl', 'br'].forEach(key => {
+    const cs = cornerStats[key];
+    const rangeLevel  = Math.round((cs.hitbox - CORNER_HITBOX_BASE) / CORNER_HITBOX_STEP) + 1;
+    const powerLevel  = Math.round((cs.damage - CORNER_DAMAGE_BASE) / CORNER_DAMAGE_STEP) + 1;
+    const hitboxAtMax = cs.hitbox >= CORNER_HITBOX_MAX;
+    const canRange    = currency >= COST_HITBOX && !hitboxAtMax;
+    const canPower    = currency >= COST_DAMAGE;
+
+    cornersHtml += `
+      <div class="corner-card">
+        <div class="corner-icon ${ICON_CLASS[key]}"></div>
+        <div class="corner-stats">
+          <div class="corner-stat-row">
+            RANGE: ${rangeLevel}
+            <button class="upgrade-xp-btn range-btn" data-key="${key}" ${canRange ? '' : 'disabled'}>+ ${COST_HITBOX}XP</button>
+          </div>
+          <div class="corner-stat-row">
+            POWER: ${powerLevel}
+            <button class="upgrade-xp-btn power-btn" data-key="${key}" ${canPower ? '' : 'disabled'}>+ ${COST_DAMAGE}XP</button>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+  cornersHtml += '</div>';
+
+  menuBody.innerHTML = `
+    <div class="menu-section-label">Stats:</div>
+    <div class="fm-stat-row">XP: <span class="fm-highlight">${currency}XP</span></div>
+    <div class="fm-stat-row">HP: <span class="fm-highlight">${playerHP}/${PLAYER_MAX_HP}</span></div>
+    ${segsHtml}
+    <button id="heal-btn" ${canHeal ? '' : 'disabled'}>HEAL ${HEAL_AMOUNT} HP — ${COST_HEAL}XP</button>
+    <div class="menu-section-label" style="margin-top:20px">Corners:</div>
+    ${cornersHtml}
+  `;
+
+  document.getElementById('heal-btn').onclick = () => {
     if (currency < COST_HEAL || playerHP >= PLAYER_MAX_HP) return;
     currency -= COST_HEAL;
     playerHP = Math.min(PLAYER_MAX_HP, playerHP + HEAL_AMOUNT);
@@ -200,73 +259,30 @@ function renderShop() {
     renderShop();
   };
 
-  // Corner cards
-  powerupGrid.innerHTML = '';
-  ['tl', 'tr', 'bl', 'br'].forEach(key => {
-    const cs = cornerStats[key];
-    const card = document.createElement('div');
-    card.className = 'corner-card';
-
-    const hitboxLevel = Math.round((cs.hitbox - CORNER_HITBOX_BASE) / CORNER_HITBOX_STEP) + 1;
-    const damageLevel = Math.round((cs.damage - CORNER_DAMAGE_BASE) / CORNER_DAMAGE_STEP) + 1;
-    const hitboxAtMax = cs.hitbox >= CORNER_HITBOX_MAX;
-    const canAffordHitbox = currency >= COST_HITBOX;
-    const canAffordDamage = currency >= COST_DAMAGE;
-
-    card.innerHTML = `
-      <div class="corner-card-label">${CORNER_LABELS[key]}</div>
-      <div class="corner-upgrade-row">
-        <span class="corner-stat-lbl">HITBOX</span>
-        <span class="corner-stat-val">${hitboxAtMax ? `LVL ${hitboxLevel} MAX` : `LVL ${hitboxLevel}`}</span>
-        <button class="upgrade-btn hitbox-btn" ${(hitboxAtMax || !canAffordHitbox) ? 'disabled' : ''}>+◈${COST_HITBOX}</button>
-      </div>
-      <div class="corner-upgrade-row">
-        <span class="corner-stat-lbl">DAMAGE</span>
-        <span class="corner-stat-val">LVL ${damageLevel}</span>
-        <button class="upgrade-btn damage-btn" ${!canAffordDamage ? 'disabled' : ''}>+◈${COST_DAMAGE}</button>
-      </div>
-    `;
-
-    card.querySelector('.hitbox-btn').addEventListener('click', () => {
-      if (currency < COST_HITBOX || cs.hitbox >= CORNER_HITBOX_MAX) return;
+  menuBody.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      if (currency < COST_HITBOX || cornerStats[key].hitbox >= CORNER_HITBOX_MAX) return;
       currency -= COST_HITBOX;
       cornerStats[key].hitbox = Math.min(CORNER_HITBOX_MAX, cornerStats[key].hitbox + CORNER_HITBOX_STEP);
-      // Update visual corner zone size
-      cornerZoneEls[key].style.width  = cornerStats[key].hitbox + 'px';
-      cornerZoneEls[key].style.height = cornerStats[key].hitbox + 'px';
+      syncCornerSize(key);
       renderShop();
     });
+  });
 
-    card.querySelector('.damage-btn').addEventListener('click', () => {
+  menuBody.querySelectorAll('.power-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
       if (currency < COST_DAMAGE) return;
       currency -= COST_DAMAGE;
       cornerStats[key].damage += CORNER_DAMAGE_STEP;
       renderShop();
     });
-
-    powerupGrid.appendChild(card);
   });
 }
 
-// ── Menu helpers ──
-function pips(filled, total, color) {
-  let html = '<div class="pip-row">';
-  for (let i = 0; i < total; i++) {
-    const cls = i < filled ? 'pip filled' : 'pip';
-    html += `<span class="${cls}" style="--pip-color:${color}"></span>`;
-  }
-  return html + '</div>';
-}
-
-function stat(label, value, cls = '') {
-  return `<div class="stat-row">
-    <span class="stat-label">${label}</span>
-    <span class="stat-value ${cls}">${value}</span>
-  </div>`;
-}
-
+// ── Show menu ──
 function showMenu(state) {
-  // Stop tokens and spawning before showing any menu
   clearAllTokens();
   clearInterval(tokenInterval);
   tokenInterval = null;
@@ -276,52 +292,29 @@ function showMenu(state) {
   menuCard.style.animation = '';
 
   if (state === 'start') {
-    shopWrap.style.display = '';
-    menuCard.style.setProperty('--accent', 'white');
-    menuEyebrow.textContent = 'ROUND 1';
-    menuTitle.textContent   = 'DVD';
-    menuTagline.textContent = 'corner the logo before it corners you';
-    statsContent.innerHTML  =
-      stat('Player HP', `${PLAYER_MAX_HP} / ${PLAYER_MAX_HP}`) +
-      pips(PLAYER_MAX_HP / 10, PLAYER_MAX_HP / 10, '#2ecc71') +
-      '<div style="height:10px"></div>' +
-      stat('Logo HP', `${BASE_LOGO_HP} / ${BASE_LOGO_HP}`);
-    menuBtn.textContent = 'BEGIN';
-    renderShop();
+    menuTitle.textContent   = 'DVD ARENA';
+    menuEyebrow.textContent = '';
+    menuTagline.textContent = 'Resize the arena to battle the DVD logo';
+    menuBody.innerHTML      = '';
+    menuBtn.innerHTML       = `Press ${keyBadge('SPACE')} to begin`;
+    menuBtn.dataset.state   = 'begin';
 
   } else if (state === 'round-clear') {
-    shopWrap.style.display = '';
-    menuCard.style.setProperty('--accent', '#2ecc71');
-    menuEyebrow.textContent = `ROUND ${currentRound} CLEARED`;
-    menuTitle.textContent   = 'CORNERED';
-    menuTagline.textContent = `next: round ${currentRound + 1}`;
-    const hpColor = playerHP > 50 ? '#2ecc71' : playerHP > 25 ? '#f1c40f' : '#e74c3c';
-    const hpCls   = playerHP > 50 ? 'good' : 'bad';
-    statsContent.innerHTML  =
-      stat('Corners landed', cornersThisRound, 'good') +
-      stat('Wall bounces',   bouncesThisRound) +
-      '<div style="height:10px"></div>' +
-      stat('HP into next round', `${playerHP} / ${PLAYER_MAX_HP}`, hpCls) +
-      pips(Math.round(playerHP / 10), PLAYER_MAX_HP / 10, hpColor) +
-      '<div style="height:6px"></div>' +
-      stat('Logo HP (next round)', `${logoMaxHP + LOGO_HP_PER_ROUND} HP`, 'bad');
-    menuBtn.textContent = 'CONTINUE';
+    menuTitle.textContent   = 'DVD ARENA';
+    menuEyebrow.textContent = `ROUND ${currentRound + 1}`;
+    menuTagline.textContent = 'Resize the arena and battle the DVD logo';
     renderShop();
+    menuBtn.innerHTML       = `Press ${keyBadge('SPACE')} to begin next battle`;
+    menuBtn.dataset.state   = 'continue';
 
   } else if (state === 'dead') {
-    shopWrap.style.display = 'none';
-    menuCard.style.setProperty('--accent', '#e74c3c');
-    menuEyebrow.textContent = `FELL ON ROUND ${currentRound}`;
-    menuTitle.textContent   = 'GAME OVER';
-    menuTagline.textContent = 'the dvd logo wins this round';
-    statsContent.innerHTML  =
-      stat('Rounds cleared',   currentRound - 1) +
-      stat('Corners this run', cornersThisRound) +
-      stat('Wall bounces',     bouncesThisRound) +
-      '<div style="height:10px"></div>' +
-      stat('HP remaining', `${playerHP} / ${PLAYER_MAX_HP}`, 'bad') +
-      pips(Math.round(playerHP / 10), PLAYER_MAX_HP / 10, '#e74c3c');
-    menuBtn.textContent = 'NEW RUN';
+    clearDeathState();
+    menuTitle.textContent   = 'DEFEATED';
+    menuEyebrow.textContent = `ROUND ${currentRound}`;
+    menuTagline.textContent = '';
+    menuBody.innerHTML      = '';
+    menuBtn.innerHTML       = `Press ${keyBadge('SPACE')} to replay`;
+    menuBtn.dataset.state   = 'restart';
   }
 
   menuEl.classList.remove('hidden');
@@ -333,7 +326,7 @@ function updateHPBars() {
   playerFill.style.width = (playerHP / PLAYER_MAX_HP * 100) + '%';
   const pct = playerHP / PLAYER_MAX_HP;
   playerFill.style.backgroundColor =
-    pct > 0.5 ? '#2ecc71' : pct > 0.25 ? '#f1c40f' : '#e74c3c';
+    pct > 0.5 ? 'white' : pct > 0.25 ? '#f1c40f' : '#e74c3c';
 }
 
 function flashDamage() {
@@ -374,16 +367,13 @@ function showDeathScreen(hitLeft, hitRight, hitTop, hitBottom) {
   clearInterval(tokenInterval);
   tokenInterval = null;
   flashWall(hitLeft, hitRight, hitTop, hitBottom, true);
-  const wallName = hitTop ? 'TOP' : hitBottom ? 'BOTTOM' : hitLeft ? 'LEFT' : 'RIGHT';
-  deathPanelSub.textContent = `lethal hit — ${wallName} wall · round ${currentRound}`;
-  deathScreen.classList.remove('hidden');
+  showMenu('dead');
 }
 
 function clearDeathState() {
   Object.values(edgeFlashEls).forEach(el => {
     el.classList.remove('flash', 'lethal');
   });
-  deathScreen.classList.add('hidden');
 }
 
 // ── Countdown ──
@@ -427,11 +417,7 @@ function startRound() {
   Object.keys(cooldowns).forEach(k => cooldowns[k] = 0);
   document.querySelectorAll('.corner-zone').forEach(el => el.classList.remove('cooling'));
 
-  // Sync corner zone sizes to current cornerStats
-  ['tl', 'tr', 'bl', 'br'].forEach(key => {
-    cornerZoneEls[key].style.width  = cornerStats[key].hitbox + 'px';
-    cornerZoneEls[key].style.height = cornerStats[key].hitbox + 'px';
-  });
+  ['tl', 'tr', 'bl', 'br'].forEach(key => syncCornerSize(key));
 
   cornersThisRound = 0;
   bouncesThisRound = 0;
@@ -464,22 +450,27 @@ function startRound() {
 // ── Menu button ──
 menuBtn.addEventListener('click', () => {
   hitSound.play().then(() => { hitSound.pause(); hitSound.currentTime = 0; }).catch(() => {});
-  const text = menuBtn.textContent;
-  if (text === 'BEGIN' || text === 'CONTINUE') {
-    if (text === 'CONTINUE') currentRound++;
+  const s = menuBtn.dataset.state;
+  if (s === 'begin') {
     startRound();
-  } else {
-    // NEW RUN: reset currency and cornerStats
+  } else if (s === 'continue') {
+    currentRound++;
+    startRound();
+  } else if (s === 'restart') {
     currentRound = 1;
     playerHP     = PLAYER_MAX_HP;
     currency     = 0;
     cornerStats  = makeCornerStats();
-    // Reset corner zone visuals to base size
-    ['tl', 'tr', 'bl', 'br'].forEach(key => {
-      cornerZoneEls[key].style.width  = CORNER_HITBOX_BASE + 'px';
-      cornerZoneEls[key].style.height = CORNER_HITBOX_BASE + 'px';
-    });
-    startRound();
+    ['tl', 'tr', 'bl', 'br'].forEach(key => syncCornerSize(key));
+    showMenu('start');
+  }
+});
+
+// Space key shortcut for menu
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !menuEl.classList.contains('hidden')) {
+    e.preventDefault();
+    menuBtn.click();
   }
 });
 
@@ -511,7 +502,6 @@ function tick() {
     colorIndex = (colorIndex + 1) % COLORS.length;
     logo.style.color = COLORS[colorIndex];
 
-    // Per-corner hitbox detection
     let detectedCorner = null;
     let detectedCornerDist = Infinity;
     const checkC = (key, dist) => {
@@ -527,12 +517,10 @@ function tick() {
     }
     const isCorner = detectedCorner !== null;
 
-    // Player damage: full outside zone, scales 0→max inside, 0 at perfect
     const damage = detectedCorner
       ? Math.round((detectedCornerDist / cornerStats[detectedCorner].hitbox) * BOUNCE_DAMAGE_MAX)
       : BOUNCE_DAMAGE_MAX;
 
-    // Corner hit: deal damage to the logo
     if (isCorner) {
       if (tryCornerHit(detectedCorner, COLORS[colorIndex])) {
         const tCorner    = 1 - detectedCornerDist / cornerStats[detectedCorner].hitbox;
@@ -553,7 +541,6 @@ function tick() {
       bouncesThisRound++;
     }
 
-    // Player damage always applies, scaled by corner proximity
     if (damage > 0) {
       playerHP = Math.max(0, playerHP - damage);
       flashDamage();
@@ -574,20 +561,22 @@ function tick() {
   requestAnimationFrame(tick);
 }
 
-// ── Resize drag ──
+
+// ── Corner drag to resize ──
+const CORNER_DIRS = { tl: 'nw', tr: 'ne', bl: 'sw', br: 'se' };
 let drag = null;
 
-document.querySelectorAll('.handle').forEach(handle => {
-  handle.addEventListener('mousedown', e => {
+Object.entries(canvasCornerEls).forEach(([corner, el]) => {
+  el.addEventListener('mousedown', e => {
     e.preventDefault();
     drag = {
-      dir: handle.dataset.dir,
+      dir: CORNER_DIRS[corner],
       startX: e.clientX, startY: e.clientY,
       startLeft: cLeft, startTop: cTop,
       startW: cWidth, startH: cHeight,
     };
     document.body.style.userSelect = 'none';
-    document.body.style.cursor = getComputedStyle(handle).cursor;
+    document.body.style.cursor = getComputedStyle(el).cursor;
   });
 });
 
@@ -617,12 +606,6 @@ document.addEventListener('mouseup', () => {
   drag = null;
   document.body.style.userSelect = '';
   document.body.style.cursor = '';
-});
-
-// ── End run button ──
-endBtn.addEventListener('click', () => {
-  clearDeathState();
-  showMenu('dead');
 });
 
 // ── Boot ──
