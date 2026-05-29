@@ -25,6 +25,8 @@ document.querySelectorAll('.edge-flash[data-edge]').forEach(el => {
   edgeFlashEls[el.dataset.edge] = el;
 });
 
+const hitSound = document.getElementById('hit-sound');
+
 // ── Constants ──
 const LOGO_W        = 160;
 const LOGO_H        = 75;
@@ -33,11 +35,13 @@ const MIN_H         = LOGO_H + 60;
 const BORDER        = 2;
 const BASE_SPEED    = 2;
 const COOLDOWN_MS   = 3000;
-const PLAYER_MAX_HP = 100;
-const BASE_LOGO_HP  = 3;
-const BOUNCE_DAMAGE      = 5;
-const CORNER_DAMAGE      = 1;
-const DAMAGE_COOLDOWN_MS = 400;
+const PLAYER_MAX_HP         = 100;
+const BASE_LOGO_HP          = 50;  // logo HP pool in round 1
+const LOGO_HP_PER_ROUND     = 20;  // added each round
+const BOUNCE_DAMAGE_MAX     = 5;   // player damage at dead-center wall hit
+const CORNER_DAMAGE_MAX     = 12;  // logo damage on a perfect corner hit
+const CORNER_DAMAGE_MIN     = 2;   // logo damage at the edge of the corner zone
+const SPEED_SCALE_PER_ROUND = 0.5;
 const CORNER_ZONE_PX = 32; // hit zone size in pixels — increase to make corners easier to hit
 
 const COLORS = [
@@ -52,7 +56,6 @@ let cornersThisRound, bouncesThisRound;
 
 // ── Physics state ──
 let x, y, vx, vy, colorIndex, gameActive;
-let lastDamageTime = 0;
 
 // ── Canvas geometry ──
 let cLeft, cTop, cWidth, cHeight;
@@ -117,11 +120,10 @@ function showMenu(state) {
     menuTitle.textContent   = 'DVD';
     menuTagline.textContent = 'corner the logo before it corners you';
     statsContent.innerHTML  =
-      stat('Player HP', PLAYER_MAX_HP) +
+      stat('Player HP', `${PLAYER_MAX_HP} / ${PLAYER_MAX_HP}`) +
       pips(PLAYER_MAX_HP / 10, PLAYER_MAX_HP / 10, '#2ecc71') +
       '<div style="height:10px"></div>' +
-      stat('Logo HP', BASE_LOGO_HP + ' hits') +
-      pips(BASE_LOGO_HP, BASE_LOGO_HP, '#e74c3c');
+      stat('Logo HP', `${BASE_LOGO_HP} / ${BASE_LOGO_HP}`);
     menuBtn.textContent = 'BEGIN';
 
   } else if (state === 'round-clear') {
@@ -138,7 +140,7 @@ function showMenu(state) {
       stat('HP into next round', `${playerHP} / ${PLAYER_MAX_HP}`, hpCls) +
       pips(Math.round(playerHP / 10), PLAYER_MAX_HP / 10, hpColor) +
       '<div style="height:6px"></div>' +
-      stat('Logo HP (next round)', logoMaxHP + 1 + ' hits', 'bad');
+      stat('Logo HP (next round)', `${logoMaxHP + LOGO_HP_PER_ROUND} HP`, 'bad');
     menuBtn.textContent = 'CONTINUE';
 
   } else if (state === 'dead') {
@@ -258,10 +260,9 @@ function startRound() {
 
   cornersThisRound = 0;
   bouncesThisRound = 0;
-  lastDamageTime   = 0;
-  logoMaxHP = BASE_LOGO_HP + (currentRound - 1);
+  logoMaxHP = BASE_LOGO_HP + (currentRound - 1) * LOGO_HP_PER_ROUND;
   logoHP    = logoMaxHP;
-  speed     = BASE_SPEED + (currentRound - 1) * 0.25;
+  speed     = BASE_SPEED + (currentRound - 1) * SPEED_SCALE_PER_ROUND;
 
   roundLabel.textContent = `ROUND ${currentRound}`;
   updateHPBars();
@@ -286,6 +287,7 @@ function startRound() {
 
 // ── Menu button ──
 menuBtn.addEventListener('click', () => {
+  hitSound.play().then(() => { hitSound.pause(); hitSound.currentTime = 0; }).catch(() => {});
   const text = menuBtn.textContent;
   if (text === 'BEGIN' || text === 'CONTINUE') {
     if (text === 'CONTINUE') currentRound++;
@@ -344,10 +346,30 @@ function tick() {
     }
     const isCorner = detectedCorner !== null;
 
+    // Closest corner distance drives both player and logo damage.
+    let closestCornerDist;
+    if ((hitLeft || hitRight) && (hitTop || hitBottom)) {
+      closestCornerDist = 0; // simultaneous two-wall hit = perfect corner
+    } else if (hitLeft || hitRight) {
+      closestCornerDist = Math.min(ny - wallT, wallB - (ny + LOGO_H));
+    } else {
+      closestCornerDist = Math.min(nx - wallL, wallR - (nx + LOGO_W));
+    }
+
+    // Player damage: full outside corner zone, scales 0→max inside, 0 at perfect.
+    const damage = closestCornerDist >= CORNER_ZONE_PX
+      ? BOUNCE_DAMAGE_MAX
+      : Math.round((closestCornerDist / CORNER_ZONE_PX) * BOUNCE_DAMAGE_MAX);
+
+    // Corner hit: deal damage to the logo
     if (isCorner) {
       if (tryCornerHit(detectedCorner, COLORS[colorIndex])) {
-        logoHP = Math.max(0, logoHP - CORNER_DAMAGE);
+        const tCorner = 1 - Math.min(1, closestCornerDist / CORNER_ZONE_PX);
+        const logoDamage = Math.round(CORNER_DAMAGE_MIN + tCorner * (CORNER_DAMAGE_MAX - CORNER_DAMAGE_MIN));
+        logoHP = Math.max(0, logoHP - logoDamage);
         cornersThisRound++;
+        hitSound.currentTime = 0;
+        hitSound.play().catch(() => {});
         flashCorner();
         updateHPBars();
         if (logoHP <= 0) {
@@ -357,19 +379,19 @@ function tick() {
         }
       }
     } else {
-      const now = Date.now();
-      if (now - lastDamageTime >= DAMAGE_COOLDOWN_MS) {
-        lastDamageTime = now;
-        playerHP = Math.max(0, playerHP - BOUNCE_DAMAGE);
-        bouncesThisRound++;
-        flashDamage();
-        flashWall(hitLeft, hitRight, hitTop, hitBottom, false);
-        updateHPBars();
-        if (playerHP <= 0) {
-          gameActive = false;
-          showDeathScreen(hitLeft, hitRight, hitTop, hitBottom);
-          return;
-        }
+      bouncesThisRound++;
+    }
+
+    // Player damage always applies, scaled by corner proximity
+    if (damage > 0) {
+      playerHP = Math.max(0, playerHP - damage);
+      flashDamage();
+      flashWall(hitLeft, hitRight, hitTop, hitBottom, false);
+      updateHPBars();
+      if (playerHP <= 0) {
+        gameActive = false;
+        showDeathScreen(hitLeft, hitRight, hitTop, hitBottom);
+        return;
       }
     }
   }
