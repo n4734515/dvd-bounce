@@ -16,19 +16,29 @@ const playerFill   = document.getElementById('player-hp-fill');
 const roundLabel   = document.getElementById('round-label');
 const countdownEl  = document.getElementById('countdown');
 const countdownNum = document.getElementById('countdown-num');
+const deathScreen  = document.getElementById('death-screen');
+const deathPanelSub = document.getElementById('death-panel-sub');
+const endBtn       = document.getElementById('end-btn');
+
+const edgeFlashEls = {};
+document.querySelectorAll('.edge-flash[data-edge]').forEach(el => {
+  edgeFlashEls[el.dataset.edge] = el;
+});
 
 // ── Constants ──
-const LOGO_W        = 120;
-const LOGO_H        = 60;
+const LOGO_W        = 160;
+const LOGO_H        = 75;
 const MIN_W         = LOGO_W + 60;
 const MIN_H         = LOGO_H + 60;
 const BORDER        = 2;
-const BASE_SPEED    = 3.5;
+const BASE_SPEED    = 2;
 const COOLDOWN_MS   = 3000;
 const PLAYER_MAX_HP = 100;
-const BASE_LOGO_HP  = 5;
-const BOUNCE_DAMAGE = 5;
-const CORNER_DAMAGE = 1;
+const BASE_LOGO_HP  = 3;
+const BOUNCE_DAMAGE      = 5;
+const CORNER_DAMAGE      = 1;
+const DAMAGE_COOLDOWN_MS = 400;
+const CORNER_ZONE_PX = 32; // hit zone size in pixels — increase to make corners easier to hit
 
 const COLORS = [
   '#e74c3c', '#e67e22', '#f1c40f',
@@ -42,6 +52,7 @@ let cornersThisRound, bouncesThisRound;
 
 // ── Physics state ──
 let x, y, vx, vy, colorIndex, gameActive;
+let lastDamageTime = 0;
 
 // ── Canvas geometry ──
 let cLeft, cTop, cWidth, cHeight;
@@ -57,6 +68,8 @@ function applyWrapGeometry() {
 const cornerZoneEls = {};
 document.querySelectorAll('.corner-zone[data-corner]').forEach(el => {
   cornerZoneEls[el.dataset.corner] = el;
+  el.style.width  = CORNER_ZONE_PX + 'px';
+  el.style.height = CORNER_ZONE_PX + 'px';
 });
 const cooldowns = { tl: 0, tr: 0, bl: 0, br: 0 };
 
@@ -169,6 +182,39 @@ function flashCorner() {
   setTimeout(() => flash.classList.remove('flash'), 300);
 }
 
+function flashWall(hitLeft, hitRight, hitTop, hitBottom, lethal) {
+  const sides = [];
+  if (hitLeft)   sides.push('w');
+  if (hitRight)  sides.push('e');
+  if (hitTop)    sides.push('n');
+  if (hitBottom) sides.push('s');
+  sides.forEach(edge => {
+    const el = edgeFlashEls[edge];
+    if (lethal) {
+      el.classList.remove('flash');
+      el.classList.add('lethal');
+    } else {
+      el.classList.remove('flash', 'lethal');
+      void el.offsetWidth;
+      el.classList.add('flash');
+    }
+  });
+}
+
+function showDeathScreen(hitLeft, hitRight, hitTop, hitBottom) {
+  flashWall(hitLeft, hitRight, hitTop, hitBottom, true);
+  const wallName = hitTop ? 'TOP' : hitBottom ? 'BOTTOM' : hitLeft ? 'LEFT' : 'RIGHT';
+  deathPanelSub.textContent = `lethal hit — ${wallName} wall · round ${currentRound}`;
+  deathScreen.classList.remove('hidden');
+}
+
+function clearDeathState() {
+  Object.values(edgeFlashEls).forEach(el => {
+    el.classList.remove('flash', 'lethal');
+  });
+  deathScreen.classList.add('hidden');
+}
+
 // ── Countdown ──
 function runCountdown(callback) {
   const steps = [
@@ -212,6 +258,7 @@ function startRound() {
 
   cornersThisRound = 0;
   bouncesThisRound = 0;
+  lastDamageTime   = 0;
   logoMaxHP = BASE_LOGO_HP + (currentRound - 1);
   logoHP    = logoMaxHP;
   speed     = BASE_SPEED + (currentRound - 1) * 0.25;
@@ -278,11 +325,27 @@ function tick() {
     colorIndex = (colorIndex + 1) % COLORS.length;
     logo.style.color = COLORS[colorIndex];
 
-    const isCorner = (hitLeft || hitRight) && (hitTop || hitBottom);
+    let detectedCorner = null;
+    if (hitLeft) {
+      if (ny - wallT < CORNER_ZONE_PX)                 detectedCorner = 'tl';
+      else if (wallB - (ny + LOGO_H) < CORNER_ZONE_PX) detectedCorner = 'bl';
+    } else if (hitRight) {
+      if (ny - wallT < CORNER_ZONE_PX)                 detectedCorner = 'tr';
+      else if (wallB - (ny + LOGO_H) < CORNER_ZONE_PX) detectedCorner = 'br';
+    }
+    if (!detectedCorner) {
+      if (hitTop) {
+        if (nx - wallL < CORNER_ZONE_PX)                 detectedCorner = 'tl';
+        else if (wallR - (nx + LOGO_W) < CORNER_ZONE_PX) detectedCorner = 'tr';
+      } else if (hitBottom) {
+        if (nx - wallL < CORNER_ZONE_PX)                 detectedCorner = 'bl';
+        else if (wallR - (nx + LOGO_W) < CORNER_ZONE_PX) detectedCorner = 'br';
+      }
+    }
+    const isCorner = detectedCorner !== null;
 
     if (isCorner) {
-      const key = cornerKey(hitLeft, hitRight, hitTop, hitBottom);
-      if (tryCornerHit(key, COLORS[colorIndex])) {
+      if (tryCornerHit(detectedCorner, COLORS[colorIndex])) {
         logoHP = Math.max(0, logoHP - CORNER_DAMAGE);
         cornersThisRound++;
         flashCorner();
@@ -294,14 +357,19 @@ function tick() {
         }
       }
     } else {
-      playerHP = Math.max(0, playerHP - BOUNCE_DAMAGE);
-      bouncesThisRound++;
-      flashDamage();
-      updateHPBars();
-      if (playerHP <= 0) {
-        gameActive = false;
-        showMenu('dead');
-        return;
+      const now = Date.now();
+      if (now - lastDamageTime >= DAMAGE_COOLDOWN_MS) {
+        lastDamageTime = now;
+        playerHP = Math.max(0, playerHP - BOUNCE_DAMAGE);
+        bouncesThisRound++;
+        flashDamage();
+        flashWall(hitLeft, hitRight, hitTop, hitBottom, false);
+        updateHPBars();
+        if (playerHP <= 0) {
+          gameActive = false;
+          showDeathScreen(hitLeft, hitRight, hitTop, hitBottom);
+          return;
+        }
       }
     }
   }
@@ -356,6 +424,12 @@ document.addEventListener('mouseup', () => {
   drag = null;
   document.body.style.userSelect = '';
   document.body.style.cursor = '';
+});
+
+// ── End run button ──
+endBtn.addEventListener('click', () => {
+  clearDeathState();
+  showMenu('dead');
 });
 
 // ── Boot ──

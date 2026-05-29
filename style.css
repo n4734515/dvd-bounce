@@ -297,11 +297,8 @@ body {
 
 #logo {
   position: absolute;
-  width: 120px;
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 160px;
+  height: 75px;
   pointer-events: none;
   z-index: 5;
 }
@@ -319,10 +316,9 @@ body {
 
 .corner-zone {
   position: absolute;
-  width: 32px;
-  height: 32px;
   border: 1px solid rgba(255,255,255,0.08);
   pointer-events: none;
+  /* size is set by CORNER_ZONE_PX in game.js */
 }
 .corner-zone.top-left     { top: 0; left: 0; border-top: none; border-left: none; }
 .corner-zone.top-right    { top: 0; right: 0; border-top: none; border-right: none; }
@@ -335,6 +331,78 @@ body {
 @keyframes corner-cooldown {
   0%   { border-color: var(--hit-color, #fff); box-shadow: inset 0 0 16px 4px var(--hit-color, #fff); }
   100% { border-color: rgba(255,255,255,0.08); box-shadow: none; }
+}
+
+/* ── Edge wall flash (per-side hit glow) ── */
+.edge-flash {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0;
+}
+.edge-flash[data-edge="n"] { top: 0; left: 0; right: 0; height: 28px; background: linear-gradient(to bottom, rgba(231,76,60,0.85), transparent); }
+.edge-flash[data-edge="s"] { bottom: 0; left: 0; right: 0; height: 28px; background: linear-gradient(to top,   rgba(231,76,60,0.85), transparent); }
+.edge-flash[data-edge="w"] { top: 0; bottom: 0; left: 0;  width:  28px; background: linear-gradient(to right,  rgba(231,76,60,0.85), transparent); }
+.edge-flash[data-edge="e"] { top: 0; bottom: 0; right: 0; width:  28px; background: linear-gradient(to left,   rgba(231,76,60,0.85), transparent); }
+
+.edge-flash.flash  { animation: edge-fade 0.45s ease-out forwards; }
+.edge-flash.lethal { opacity: 1; animation: none; }
+
+@keyframes edge-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── Death screen ── */
+#death-screen {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 52px;
+  z-index: 60;
+}
+#death-screen.hidden { display: none; }
+
+#death-panel {
+  text-align: center;
+  padding: 28px 48px;
+  border: 1px solid rgba(231,76,60,0.25);
+  background: rgba(0,0,0,0.75);
+  animation: menu-in 0.2s ease-out;
+}
+#death-panel-title {
+  font-family: 'Arial Black', Arial, sans-serif;
+  font-size: 26px;
+  font-weight: 900;
+  color: #e74c3c;
+  letter-spacing: 0.12em;
+  margin-bottom: 6px;
+}
+#death-panel-sub {
+  font-size: 10px;
+  color: rgba(255,255,255,0.3);
+  letter-spacing: 0.1em;
+  margin-bottom: 22px;
+}
+#end-btn {
+  background: none;
+  border: 1px solid rgba(231,76,60,0.4);
+  color: rgba(231,76,60,0.8);
+  font-family: monospace;
+  font-size: 11px;
+  padding: 9px 30px;
+  cursor: pointer;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+#end-btn:hover {
+  background: rgba(231,76,60,0.1);
+  border-color: #e74c3c;
+  color: white;
 }
 
 .handle {
