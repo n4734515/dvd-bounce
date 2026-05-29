@@ -19,6 +19,10 @@ const countdownNum = document.getElementById('countdown-num');
 const deathScreen  = document.getElementById('death-screen');
 const deathPanelSub = document.getElementById('death-panel-sub');
 const endBtn       = document.getElementById('end-btn');
+const currencyVal  = document.getElementById('currency-val');
+const healBtn      = document.getElementById('heal-btn');
+const shopWrap     = document.getElementById('shop-wrap');
+const powerupGrid  = document.getElementById('powerup-grid');
 
 const edgeFlashEls = {};
 document.querySelectorAll('.edge-flash[data-edge]').forEach(el => {
@@ -39,10 +43,22 @@ const PLAYER_MAX_HP         = 100;
 const BASE_LOGO_HP          = 50;  // logo HP pool in round 1
 const LOGO_HP_PER_ROUND     = 20;  // added each round
 const BOUNCE_DAMAGE_MAX     = 5;   // player damage at dead-center wall hit
-const CORNER_DAMAGE_MAX     = 12;  // logo damage on a perfect corner hit
 const CORNER_DAMAGE_MIN     = 2;   // logo damage at the edge of the corner zone
 const SPEED_SCALE_PER_ROUND = 0.5;
-const CORNER_ZONE_PX = 32; // hit zone size in pixels — increase to make corners easier to hit
+
+const CORNER_HITBOX_BASE  = 32;
+const CORNER_HITBOX_MAX   = 80;
+const CORNER_HITBOX_STEP  = 12;   // px per level
+const CORNER_DAMAGE_BASE  = 12;   // damage at level 1
+const CORNER_DAMAGE_STEP  = 3;    // damage per level
+const COST_HITBOX         = 20;   // currency
+const COST_DAMAGE         = 30;   // currency
+const COST_HEAL           = 25;   // currency per heal
+const HEAL_AMOUNT         = 20;   // HP restored
+const TOKEN_VALUE         = 15;
+const TOKEN_LIFETIME      = 6000;
+const TOKEN_SPAWN_INTERVAL= 4500;
+const MAX_TOKENS          = 3;
 
 const COLORS = [
   '#e74c3c', '#e67e22', '#f1c40f',
@@ -50,9 +66,23 @@ const COLORS = [
   '#9b59b6', '#e91e8c', '#00bcd4',
 ];
 
+// ── Per-corner stats ──
+function makeCornerStats() {
+  return {
+    tl: { hitbox: CORNER_HITBOX_BASE, damage: 12 },
+    tr: { hitbox: CORNER_HITBOX_BASE, damage: 12 },
+    bl: { hitbox: CORNER_HITBOX_BASE, damage: 12 },
+    br: { hitbox: CORNER_HITBOX_BASE, damage: 12 },
+  };
+}
+let cornerStats = makeCornerStats();
+
 // ── Run state ──
 let currentRound, playerHP, logoHP, logoMaxHP, speed;
 let cornersThisRound, bouncesThisRound;
+let currency = 0;
+let tokens = [];
+let tokenInterval = null;
 
 // ── Physics state ──
 let x, y, vx, vy, colorIndex, gameActive;
@@ -71,8 +101,8 @@ function applyWrapGeometry() {
 const cornerZoneEls = {};
 document.querySelectorAll('.corner-zone[data-corner]').forEach(el => {
   cornerZoneEls[el.dataset.corner] = el;
-  el.style.width  = CORNER_ZONE_PX + 'px';
-  el.style.height = CORNER_ZONE_PX + 'px';
+  el.style.width  = CORNER_HITBOX_BASE + 'px';
+  el.style.height = CORNER_HITBOX_BASE + 'px';
 });
 const cooldowns = { tl: 0, tr: 0, bl: 0, br: 0 };
 
@@ -90,6 +120,132 @@ function tryCornerHit(key, color) {
   void el.offsetWidth;
   el.classList.add('cooling');
   return true;
+}
+
+// ── Token functions ──
+function spawnToken() {
+  if (!gameActive) return;
+  if (tokens.length >= MAX_TOKENS) return;
+
+  const el = document.createElement('div');
+  el.className = 'token';
+
+  // Viewport-fixed position within the current canvas area — unaffected by resizing
+  const margin = 40;
+  const posLeft = cLeft + BORDER + margin + Math.random() * (cWidth  - BORDER * 2 - margin * 2 - 30);
+  const posTop  = cTop  + BORDER + margin + Math.random() * (cHeight - BORDER * 2 - margin * 2 - 32);
+  el.style.left = posLeft + 'px';
+  el.style.top  = posTop  + 'px';
+
+  el.innerHTML = `
+    <div class="token-icon">◈</div>
+    <div class="token-timer"><div class="token-timer-fill"></div></div>
+  `;
+
+  // Shrink the timer bar over TOKEN_LIFETIME
+  const fill = el.querySelector('.token-timer-fill');
+  // Force reflow before starting transition
+  requestAnimationFrame(() => {
+    fill.style.transition = `width ${TOKEN_LIFETIME}ms linear`;
+    fill.style.width = '0%';
+  });
+
+  el.addEventListener('click', e => {
+    e.stopPropagation();
+    currency += TOKEN_VALUE;
+    updateCurrencyDisplay();
+    removeToken(token);
+  });
+
+  const token = {
+    el,
+    timeout: setTimeout(() => removeToken(token), TOKEN_LIFETIME),
+  };
+
+  document.body.appendChild(el);
+  tokens.push(token);
+}
+
+function removeToken(token) {
+  clearTimeout(token.timeout);
+  if (token.el.parentNode) token.el.parentNode.removeChild(token.el);
+  const idx = tokens.indexOf(token);
+  if (idx !== -1) tokens.splice(idx, 1);
+}
+
+function clearAllTokens() {
+  tokens.slice().forEach(t => removeToken(t));
+  tokens = [];
+}
+
+// ── Currency display ──
+function updateCurrencyDisplay() {
+  if (currencyVal) currencyVal.textContent = '◈ ' + currency;
+}
+
+// ── Shop render ──
+const CORNER_LABELS = { tl: 'TOP LEFT', tr: 'TOP RIGHT', bl: 'BOT LEFT', br: 'BOT RIGHT' };
+
+function renderShop() {
+  updateCurrencyDisplay();
+
+  // Heal button
+  const canHeal = currency >= COST_HEAL && playerHP < PLAYER_MAX_HP;
+  healBtn.disabled = !canHeal;
+  healBtn.onclick = () => {
+    if (currency < COST_HEAL || playerHP >= PLAYER_MAX_HP) return;
+    currency -= COST_HEAL;
+    playerHP = Math.min(PLAYER_MAX_HP, playerHP + HEAL_AMOUNT);
+    updateHPBars();
+    renderShop();
+  };
+
+  // Corner cards
+  powerupGrid.innerHTML = '';
+  ['tl', 'tr', 'bl', 'br'].forEach(key => {
+    const cs = cornerStats[key];
+    const card = document.createElement('div');
+    card.className = 'corner-card';
+
+    const hitboxLevel = Math.round((cs.hitbox - CORNER_HITBOX_BASE) / CORNER_HITBOX_STEP) + 1;
+    const damageLevel = Math.round((cs.damage - CORNER_DAMAGE_BASE) / CORNER_DAMAGE_STEP) + 1;
+    const hitboxAtMax = cs.hitbox >= CORNER_HITBOX_MAX;
+    const canAffordHitbox = currency >= COST_HITBOX;
+    const canAffordDamage = currency >= COST_DAMAGE;
+
+    card.innerHTML = `
+      <div class="corner-card-label">${CORNER_LABELS[key]}</div>
+      <div class="corner-upgrade-row">
+        <span class="corner-stat-lbl">HITBOX</span>
+        <span class="corner-stat-val">${hitboxAtMax ? `LVL ${hitboxLevel} MAX` : `LVL ${hitboxLevel}`}</span>
+        <button class="upgrade-btn hitbox-btn" ${(hitboxAtMax || !canAffordHitbox) ? 'disabled' : ''}>+◈${COST_HITBOX}</button>
+      </div>
+      <div class="corner-upgrade-row">
+        <span class="corner-stat-lbl">DAMAGE</span>
+        <span class="corner-stat-val">LVL ${damageLevel}</span>
+        <button class="upgrade-btn damage-btn" ${!canAffordDamage ? 'disabled' : ''}>+◈${COST_DAMAGE}</button>
+      </div>
+    `;
+
+    card.querySelector('.hitbox-btn').addEventListener('click', () => {
+      if (currency < COST_HITBOX || cs.hitbox >= CORNER_HITBOX_MAX) return;
+      currency -= COST_HITBOX;
+      cornerStats[key].hitbox = Math.min(CORNER_HITBOX_MAX, cornerStats[key].hitbox + CORNER_HITBOX_STEP);
+      // Update visual corner zone size
+      cornerZoneEls[key].style.width  = cornerStats[key].hitbox + 'px';
+      cornerZoneEls[key].style.height = cornerStats[key].hitbox + 'px';
+      renderShop();
+    });
+
+    card.querySelector('.damage-btn').addEventListener('click', () => {
+      if (currency < COST_DAMAGE) return;
+      currency -= COST_DAMAGE;
+      cornerStats[key].damage += CORNER_DAMAGE_STEP;
+      renderShop();
+    });
+
+    powerupGrid.appendChild(card);
+  });
 }
 
 // ── Menu helpers ──
@@ -110,11 +266,17 @@ function stat(label, value, cls = '') {
 }
 
 function showMenu(state) {
+  // Stop tokens and spawning before showing any menu
+  clearAllTokens();
+  clearInterval(tokenInterval);
+  tokenInterval = null;
+
   menuCard.style.animation = 'none';
   void menuCard.offsetWidth;
   menuCard.style.animation = '';
 
   if (state === 'start') {
+    shopWrap.style.display = '';
     menuCard.style.setProperty('--accent', 'white');
     menuEyebrow.textContent = 'ROUND 1';
     menuTitle.textContent   = 'DVD';
@@ -125,8 +287,10 @@ function showMenu(state) {
       '<div style="height:10px"></div>' +
       stat('Logo HP', `${BASE_LOGO_HP} / ${BASE_LOGO_HP}`);
     menuBtn.textContent = 'BEGIN';
+    renderShop();
 
   } else if (state === 'round-clear') {
+    shopWrap.style.display = '';
     menuCard.style.setProperty('--accent', '#2ecc71');
     menuEyebrow.textContent = `ROUND ${currentRound} CLEARED`;
     menuTitle.textContent   = 'CORNERED';
@@ -142,8 +306,10 @@ function showMenu(state) {
       '<div style="height:6px"></div>' +
       stat('Logo HP (next round)', `${logoMaxHP + LOGO_HP_PER_ROUND} HP`, 'bad');
     menuBtn.textContent = 'CONTINUE';
+    renderShop();
 
   } else if (state === 'dead') {
+    shopWrap.style.display = 'none';
     menuCard.style.setProperty('--accent', '#e74c3c');
     menuEyebrow.textContent = `FELL ON ROUND ${currentRound}`;
     menuTitle.textContent   = 'GAME OVER';
@@ -204,6 +370,9 @@ function flashWall(hitLeft, hitRight, hitTop, hitBottom, lethal) {
 }
 
 function showDeathScreen(hitLeft, hitRight, hitTop, hitBottom) {
+  clearAllTokens();
+  clearInterval(tokenInterval);
+  tokenInterval = null;
   flashWall(hitLeft, hitRight, hitTop, hitBottom, true);
   const wallName = hitTop ? 'TOP' : hitBottom ? 'BOTTOM' : hitLeft ? 'LEFT' : 'RIGHT';
   deathPanelSub.textContent = `lethal hit — ${wallName} wall · round ${currentRound}`;
@@ -258,6 +427,12 @@ function startRound() {
   Object.keys(cooldowns).forEach(k => cooldowns[k] = 0);
   document.querySelectorAll('.corner-zone').forEach(el => el.classList.remove('cooling'));
 
+  // Sync corner zone sizes to current cornerStats
+  ['tl', 'tr', 'bl', 'br'].forEach(key => {
+    cornerZoneEls[key].style.width  = cornerStats[key].hitbox + 'px';
+    cornerZoneEls[key].style.height = cornerStats[key].hitbox + 'px';
+  });
+
   cornersThisRound = 0;
   bouncesThisRound = 0;
   logoMaxHP = BASE_LOGO_HP + (currentRound - 1) * LOGO_HP_PER_ROUND;
@@ -281,6 +456,7 @@ function startRound() {
 
   runCountdown(() => {
     gameActive = true;
+    tokenInterval = setInterval(spawnToken, TOKEN_SPAWN_INTERVAL);
     requestAnimationFrame(tick);
   });
 }
@@ -293,8 +469,16 @@ menuBtn.addEventListener('click', () => {
     if (text === 'CONTINUE') currentRound++;
     startRound();
   } else {
+    // NEW RUN: reset currency and cornerStats
     currentRound = 1;
     playerHP     = PLAYER_MAX_HP;
+    currency     = 0;
+    cornerStats  = makeCornerStats();
+    // Reset corner zone visuals to base size
+    ['tl', 'tr', 'bl', 'br'].forEach(key => {
+      cornerZoneEls[key].style.width  = CORNER_HITBOX_BASE + 'px';
+      cornerZoneEls[key].style.height = CORNER_HITBOX_BASE + 'px';
+    });
     startRound();
   }
 });
@@ -327,45 +511,32 @@ function tick() {
     colorIndex = (colorIndex + 1) % COLORS.length;
     logo.style.color = COLORS[colorIndex];
 
+    // Per-corner hitbox detection
     let detectedCorner = null;
-    if (hitLeft) {
-      if (ny - wallT < CORNER_ZONE_PX)                 detectedCorner = 'tl';
-      else if (wallB - (ny + LOGO_H) < CORNER_ZONE_PX) detectedCorner = 'bl';
-    } else if (hitRight) {
-      if (ny - wallT < CORNER_ZONE_PX)                 detectedCorner = 'tr';
-      else if (wallB - (ny + LOGO_H) < CORNER_ZONE_PX) detectedCorner = 'br';
-    }
-    if (!detectedCorner) {
-      if (hitTop) {
-        if (nx - wallL < CORNER_ZONE_PX)                 detectedCorner = 'tl';
-        else if (wallR - (nx + LOGO_W) < CORNER_ZONE_PX) detectedCorner = 'tr';
-      } else if (hitBottom) {
-        if (nx - wallL < CORNER_ZONE_PX)                 detectedCorner = 'bl';
-        else if (wallR - (nx + LOGO_W) < CORNER_ZONE_PX) detectedCorner = 'br';
+    let detectedCornerDist = Infinity;
+    const checkC = (key, dist) => {
+      if (dist >= 0 && dist < cornerStats[key].hitbox && dist < detectedCornerDist) {
+        detectedCorner = key; detectedCornerDist = dist;
       }
+    };
+    if (hitLeft)         { checkC('tl', ny - wallT); checkC('bl', wallB - (ny + LOGO_H)); }
+    else if (hitRight)   { checkC('tr', ny - wallT); checkC('br', wallB - (ny + LOGO_H)); }
+    if (!detectedCorner) {
+      if (hitTop)        { checkC('tl', nx - wallL); checkC('tr', wallR - (nx + LOGO_W)); }
+      else if (hitBottom){ checkC('bl', nx - wallL); checkC('br', wallR - (nx + LOGO_W)); }
     }
     const isCorner = detectedCorner !== null;
 
-    // Closest corner distance drives both player and logo damage.
-    let closestCornerDist;
-    if ((hitLeft || hitRight) && (hitTop || hitBottom)) {
-      closestCornerDist = 0; // simultaneous two-wall hit = perfect corner
-    } else if (hitLeft || hitRight) {
-      closestCornerDist = Math.min(ny - wallT, wallB - (ny + LOGO_H));
-    } else {
-      closestCornerDist = Math.min(nx - wallL, wallR - (nx + LOGO_W));
-    }
-
-    // Player damage: full outside corner zone, scales 0→max inside, 0 at perfect.
-    const damage = closestCornerDist >= CORNER_ZONE_PX
-      ? BOUNCE_DAMAGE_MAX
-      : Math.round((closestCornerDist / CORNER_ZONE_PX) * BOUNCE_DAMAGE_MAX);
+    // Player damage: full outside zone, scales 0→max inside, 0 at perfect
+    const damage = detectedCorner
+      ? Math.round((detectedCornerDist / cornerStats[detectedCorner].hitbox) * BOUNCE_DAMAGE_MAX)
+      : BOUNCE_DAMAGE_MAX;
 
     // Corner hit: deal damage to the logo
     if (isCorner) {
       if (tryCornerHit(detectedCorner, COLORS[colorIndex])) {
-        const tCorner = 1 - Math.min(1, closestCornerDist / CORNER_ZONE_PX);
-        const logoDamage = Math.round(CORNER_DAMAGE_MIN + tCorner * (CORNER_DAMAGE_MAX - CORNER_DAMAGE_MIN));
+        const tCorner    = 1 - detectedCornerDist / cornerStats[detectedCorner].hitbox;
+        const logoDamage = Math.round(CORNER_DAMAGE_MIN + tCorner * (cornerStats[detectedCorner].damage - CORNER_DAMAGE_MIN));
         logoHP = Math.max(0, logoHP - logoDamage);
         cornersThisRound++;
         hitSound.currentTime = 0;
