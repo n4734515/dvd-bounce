@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DVD Bounce</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #111;
+      font-family: monospace;
+    }
+
+    /* Wrapper is the resizable unit; handles live outside it */
+    #canvas-wrap {
+      position: absolute;
+      overflow: visible;
+    }
+
+    /* The actual play field */
+    #canvas {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      border: 2px solid #333;
+      overflow: hidden;
+    }
+
+    #logo {
+      position: absolute;
+      width: 120px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    #logo svg { width: 100%; height: 100%; }
+
+    /* Corner flash overlay */
+    #corner-flash {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      background: radial-gradient(ellipse at center, rgba(255,255,255,0.18) 0%, transparent 70%);
+      transition: opacity 0.05s;
+    }
+    #corner-flash.flash { opacity: 1; }
+
+    /* Corner hit zones */
+    .corner-zone {
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(255,255,255,0.08);
+      pointer-events: none;
+    }
+    .corner-zone.top-left     { top: 0; left: 0; border-top: none; border-left: none; }
+    .corner-zone.top-right    { top: 0; right: 0; border-top: none; border-right: none; }
+    .corner-zone.bottom-left  { bottom: 0; left: 0; border-bottom: none; border-left: none; }
+    .corner-zone.bottom-right { bottom: 0; right: 0; border-bottom: none; border-right: none; }
+
+    /* Per-corner cooldown glow — recedes over the cooldown duration */
+    .corner-zone.cooling {
+      animation: corner-cooldown var(--cd, 3000ms) ease-out forwards;
+    }
+    @keyframes corner-cooldown {
+      0%   {
+        border-color: var(--hit-color, #fff);
+        box-shadow: inset 0 0 16px 4px var(--hit-color, #fff);
+      }
+      100% {
+        border-color: rgba(255,255,255,0.08);
+        box-shadow: none;
+      }
+    }
+
+    #hud {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      color: rgba(255,255,255,0.25);
+      font-size: 11px;
+      line-height: 1.6;
+      text-align: right;
+      pointer-events: none;
+    }
+
+    /* ── Resize handles ── */
+    .handle {
+      position: absolute;
+      z-index: 10;
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+      transition: background 0.15s;
+    }
+    .handle:hover { background: rgba(255,255,255,0.35); }
+    .handle:active { background: rgba(255,255,255,0.5); }
+
+    /* Edge handles */
+    .handle.n, .handle.s {
+      left: 20%;
+      width: 60%;
+      height: 6px;
+      cursor: n-resize;
+    }
+    .handle.n { top: -5px; }
+    .handle.s { bottom: -5px; cursor: s-resize; }
+
+    .handle.e, .handle.w {
+      top: 20%;
+      height: 60%;
+      width: 6px;
+      cursor: e-resize;
+    }
+    .handle.e { right: -5px; }
+    .handle.w { left: -5px; cursor: w-resize; }
+
+    /* Corner handles */
+    .handle.nw, .handle.ne, .handle.sw, .handle.se {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+    }
+    .handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+    .handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+    .handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+    .handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
+
+    /* Hint label */
+    #hint {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,0.18);
+      font-family: monospace;
+      font-size: 11px;
+      pointer-events: none;
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-wrap">
+  <div id="canvas">
+    <div class="corner-zone top-left"     data-corner="tl"></div>
+    <div class="corner-zone top-right"    data-corner="tr"></div>
+    <div class="corner-zone bottom-left"  data-corner="bl"></div>
+    <div class="corner-zone bottom-right" data-corner="br"></div>
+    <div id="corner-flash"></div>
+    <div id="hud">
+      bounces: <span id="bounce-count">0</span><br>
+      corners: <span id="corner-hits">0</span>
+    </div>
+  </div>
+
+  <!-- Resize handles -->
+  <div class="handle n"  data-dir="n"></div>
+  <div class="handle s"  data-dir="s"></div>
+  <div class="handle e"  data-dir="e"></div>
+  <div class="handle w"  data-dir="w"></div>
+  <div class="handle nw" data-dir="nw"></div>
+  <div class="handle ne" data-dir="ne"></div>
+  <div class="handle sw" data-dir="sw"></div>
+  <div class="handle se" data-dir="se"></div>
+</div>
+
+<div id="logo">
+  <svg viewBox="0 0 120 60" xmlns="http://www.w3.org/2000/svg">
+    <text
+      x="50%" y="54%"
+      dominant-baseline="middle"
+      text-anchor="middle"
+      font-family="Arial Black, sans-serif"
+      font-size="38" font-weight="900" letter-spacing="2"
+      fill="currentColor"
+    >DVD</text>
+  </svg>
+</div>
+
+<div id="hint">drag edges to reshape the field</div>
+
+<script>
+  const wrap = document.getElementById('canvas-wrap');
+  const canvas = document.getElementById('canvas');
+  const logo = document.getElementById('logo');
+  const flash = document.getElementById('corner-flash');
+  const bounceCountEl = document.getElementById('bounce-count');
+  const cornerHitsEl = document.getElementById('corner-hits');
+
+  const LOGO_W = 120;
+  const LOGO_H = 60;
+  const MIN_W = LOGO_W + 60;
+  const MIN_H = LOGO_H + 60;
+  const SPEED = 3.5;
+  const COOLDOWN_MS = 3000;
+
+  const COLORS = [
+    '#e74c3c','#e67e22','#f1c40f',
+    '#2ecc71','#1abc9c','#3498db',
+    '#9b59b6','#e91e8c','#00bcd4',
+  ];
+
+  // Canvas geometry (pixels)
+  let cLeft, cTop, cWidth, cHeight;
+
+  function applyWrapGeometry() {
+    wrap.style.left   = cLeft + 'px';
+    wrap.style.top    = cTop  + 'px';
+    wrap.style.width  = cWidth  + 'px';
+    wrap.style.height = cHeight + 'px';
+  }
+
+  // Init canvas centered in viewport
+  cWidth  = 800;
+  cHeight = 500;
+  cLeft   = (window.innerWidth  - cWidth)  / 2;
+  cTop    = (window.innerHeight - cHeight) / 2;
+  applyWrapGeometry();
+
+  // ── Per-corner cooldown ──
+  const cornerZoneEls = {};
+  document.querySelectorAll('.corner-zone[data-corner]').forEach(el => {
+    cornerZoneEls[el.dataset.corner] = el;
+  });
+  const cooldowns = { tl: 0, tr: 0, bl: 0, br: 0 };
+
+  function cornerKey(hitLeft, hitRight, hitTop, hitBottom) {
+    return (hitTop ? 't' : 'b') + (hitLeft ? 'l' : 'r');
+  }
+
+  function tryCornerHit(key, color) {
+    if (Date.now() < cooldowns[key]) return false;
+    cooldowns[key] = Date.now() + COOLDOWN_MS;
+    const el = cornerZoneEls[key];
+    el.style.setProperty('--hit-color', color);
+    el.style.setProperty('--cd', COOLDOWN_MS + 'ms');
+    el.classList.remove('cooling');
+    void el.offsetWidth; // force reflow to restart animation
+    el.classList.add('cooling');
+    return true;
+  }
+
+  // ── Bounce state ──
+  let x, y, vx, vy, colorIndex, bounces, cornerHits;
+
+  function randomInitial() {
+    // Start in the middle third of the canvas, in viewport coords
+    x = cLeft + cWidth  / 3 + Math.random() * (cWidth  / 3);
+    y = cTop  + cHeight / 3 + Math.random() * (cHeight / 3);
+    const angle = (Math.PI / 4) + (Math.random() - 0.5) * 0.3;
+    vx = Math.cos(angle) * SPEED * (Math.random() < 0.5 ? 1 : -1);
+    vy = Math.sin(angle) * SPEED * (Math.random() < 0.5 ? 1 : -1);
+    colorIndex = 0;
+    bounces = 0;
+    cornerHits = 0;
+    applyColor();
+    updateHUD();
+  }
+
+  function applyColor() {
+    logo.style.color = COLORS[colorIndex % COLORS.length];
+  }
+
+  function nextColor() {
+    colorIndex = (colorIndex + 1) % COLORS.length;
+    applyColor();
+  }
+
+  function updateHUD() {
+    bounceCountEl.textContent = bounces;
+    cornerHitsEl.textContent  = cornerHits;
+  }
+
+  function triggerCornerFlash() {
+    flash.classList.remove('flash');
+    void flash.offsetWidth;
+    flash.classList.add('flash');
+    setTimeout(() => flash.classList.remove('flash'), 300);
+  }
+
+  const BORDER = 2; // canvas border thickness
+
+  function tick() {
+    // Wall positions in viewport coordinates
+    const wallL = cLeft   + BORDER;
+    const wallR = cLeft   + cWidth  - BORDER;
+    const wallT = cTop    + BORDER;
+    const wallB = cTop    + cHeight - BORDER;
+
+    let nx = x + vx;
+    let ny = y + vy;
+
+    let hitLeft = false, hitRight = false, hitTop = false, hitBottom = false;
+
+    if (nx <= wallL) {
+      nx = wallL; vx = Math.abs(vx); hitLeft = true;
+    } else if (nx + LOGO_W >= wallR) {
+      nx = wallR - LOGO_W; vx = -Math.abs(vx); hitRight = true;
+    }
+
+    if (ny <= wallT) {
+      ny = wallT; vy = Math.abs(vy); hitTop = true;
+    } else if (ny + LOGO_H >= wallB) {
+      ny = wallB - LOGO_H; vy = -Math.abs(vy); hitBottom = true;
+    }
+
+    if (hitLeft || hitRight || hitTop || hitBottom) {
+      bounces++;
+      nextColor();
+      if ((hitLeft || hitRight) && (hitTop || hitBottom)) {
+        const key = cornerKey(hitLeft, hitRight, hitTop, hitBottom);
+        if (tryCornerHit(key, COLORS[colorIndex % COLORS.length])) {
+          cornerHits++;
+          triggerCornerFlash();
+        }
+      }
+      updateHUD();
+    }
+
+    x = nx; y = ny;
+    logo.style.left = x + 'px';
+    logo.style.top  = y + 'px';
+
+    requestAnimationFrame(tick);
+  }
+
+  randomInitial();
+  requestAnimationFrame(tick);
+
+  // ── Resize drag logic ──
+  let drag = null;
+
+  document.querySelectorAll('.handle').forEach(handle => {
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      drag = {
+        dir:        handle.dataset.dir,
+        startX:     e.clientX,
+        startY:     e.clientY,
+        startLeft:  cLeft,
+        startTop:   cTop,
+        startW:     cWidth,
+        startH:     cHeight,
+      };
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = handle.style.cursor || getComputedStyle(handle).cursor;
+    });
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const dir = drag.dir;
+
+    let newLeft = drag.startLeft;
+    let newTop  = drag.startTop;
+    let newW    = drag.startW;
+    let newH    = drag.startH;
+
+    if (dir.includes('e')) newW = drag.startW + dx;
+    if (dir.includes('s')) newH = drag.startH + dy;
+    if (dir.includes('w')) { newW = drag.startW - dx; newLeft = drag.startLeft + dx; }
+    if (dir.includes('n')) { newH = drag.startH - dy; newTop  = drag.startTop  + dy; }
+
+    // Enforce minimums — anchor the fixed edge when clamping
+    if (newW < MIN_W) {
+      if (dir.includes('w')) newLeft = drag.startLeft + drag.startW - MIN_W;
+      newW = MIN_W;
+    }
+    if (newH < MIN_H) {
+      if (dir.includes('n')) newTop = drag.startTop + drag.startH - MIN_H;
+      newH = MIN_H;
+    }
+
+    cLeft = newLeft; cTop = newTop; cWidth = newW; cHeight = newH;
+    applyWrapGeometry();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!drag) return;
+    drag = null;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  });
+</script>
+
+</body>
+</html>
