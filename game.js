@@ -48,8 +48,11 @@ const COST_HITBOX         = 20;
 const COST_DAMAGE         = 30;
 const COST_HEAL           = 25;
 const HEAL_AMOUNT         = 20;
-const TOKEN_VALUE         = 10;
-const TOKEN_LIFETIME      = 6000;
+const TOKEN_10_VALUE      = 10;
+const TOKEN_50_VALUE      = 50;
+const TOKEN_10_LIFETIME   = 6000;
+const TOKEN_50_LIFETIME   = 2500;
+const TOKEN_50_CHANCE     = 0.22;
 const TOKEN_SPAWN_INTERVAL= 4500;
 const MAX_TOKENS          = 3;
 
@@ -145,48 +148,66 @@ function spawnToken() {
   if (!gameActive) return;
   if (tokens.length >= MAX_TOKENS) return;
 
-  const el = document.createElement('div');
-  el.className = 'token';
+  const is50     = Math.random() < TOKEN_50_CHANCE;
+  const value    = is50 ? TOKEN_50_VALUE    : TOKEN_10_VALUE;
+  const lifetime = is50 ? TOKEN_50_LIFETIME : TOKEN_10_LIFETIME;
 
-  const margin = 40;
-  const posLeft = cLeft + BORDER + margin + Math.random() * (cWidth  - BORDER * 2 - margin * 2 - 30);
-  const posTop  = cTop  + BORDER + margin + Math.random() * (cHeight - BORDER * 2 - margin * 2 - 32);
+  const el = document.createElement('div');
+  el.className = is50 ? 'token token-50' : 'token token-10';
+
+  const margin  = 40;
+  const posLeft = cLeft + BORDER + margin + Math.random() * (cWidth  - BORDER * 2 - margin * 2 - 68);
+  const posTop  = cTop  + BORDER + margin + Math.random() * (cHeight - BORDER * 2 - margin * 2 - 34);
   el.style.left = posLeft + 'px';
   el.style.top  = posTop  + 'px';
 
   el.innerHTML = `
-    <div class="token-icon">◈</div>
-    <div class="token-timer"><div class="token-timer-fill"></div></div>
+    <div class="token-label">+ ${value}XP</div>
+    <div class="token-bar"><div class="token-bar-fill"></div></div>
   `;
 
-  const fill = el.querySelector('.token-timer-fill');
+  const fill = el.querySelector('.token-bar-fill');
   requestAnimationFrame(() => {
-    fill.style.transition = `width ${TOKEN_LIFETIME}ms linear`;
+    fill.style.transition = `width ${lifetime}ms linear`;
     fill.style.width = '0%';
   });
 
   el.addEventListener('click', e => {
     e.stopPropagation();
-    currency += TOKEN_VALUE;
-    removeToken(token);
+    currency += value;
+
+    // Floating confirmation
+    const rect = el.getBoundingClientRect();
+    const floater = document.createElement('div');
+    floater.className = 'token-confirm' + (is50 ? ' token-confirm-50' : '');
+    floater.textContent = `+${value}XP`;
+    floater.style.left = (rect.left + rect.width / 2) + 'px';
+    floater.style.top  = rect.top + 'px';
+    document.body.appendChild(floater);
+    setTimeout(() => floater.remove(), 700);
+
+    // Pop then remove
+    el.classList.add('token-clicked');
+    removeToken(token, true);
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
   });
 
   const token = {
     el,
     vx: posLeft,
     vy: posTop,
-    timeout: setTimeout(() => removeToken(token), TOKEN_LIFETIME),
+    timeout: setTimeout(() => removeToken(token), lifetime),
   };
 
   document.body.appendChild(el);
   tokens.push(token);
 }
 
-function removeToken(token) {
+function removeToken(token, keepEl = false) {
   clearTimeout(token.timeout);
-  if (token.el.parentNode) token.el.parentNode.removeChild(token.el);
   const idx = tokens.indexOf(token);
   if (idx !== -1) tokens.splice(idx, 1);
+  if (!keepEl && token.el.parentNode) token.el.parentNode.removeChild(token.el);
 }
 
 function clearAllTokens() {
@@ -367,13 +388,98 @@ function showDeathScreen(hitLeft, hitRight, hitTop, hitBottom) {
   clearInterval(tokenInterval);
   tokenInterval = null;
   flashWall(hitLeft, hitRight, hitTop, hitBottom, true);
-  showMenu('dead');
+
+  // Screen shake
+  wrap.classList.add('screen-shake');
+  setTimeout(() => wrap.classList.remove('screen-shake'), 420);
+
+  // Crack overlay from the lethal wall
+  const crackEl = createCrackOverlay(hitLeft, hitRight, hitTop, hitBottom);
+  canvas.appendChild(crackEl);
+
+  setTimeout(() => {
+    crackEl.remove();
+    showMenu('dead');
+  }, 850);
+}
+
+function createCrackOverlay(hitLeft, hitRight, hitTop, hitBottom) {
+  const wall = hitTop ? 'top' : hitBottom ? 'bottom' : hitLeft ? 'left' : 'right';
+  const P = {
+    top: [
+      ['M 44,0 L 28,30 L 16,44', .75], ['M 28,30 L 18,40', .45],
+      ['M 44,0 L 56,26 L 48,48', .75], ['M 56,26 L 66,38', .45],
+      ['M 56,0 L 70,22 L 80,34', .60], ['M 36,0 L 24,24', .50],
+      ['M 62,0 L 74,30', .35],
+    ],
+    bottom: [
+      ['M 44,100 L 28,70 L 16,56', .75], ['M 28,70 L 18,60', .45],
+      ['M 44,100 L 56,74 L 48,52', .75], ['M 56,74 L 66,62', .45],
+      ['M 56,100 L 70,78 L 80,66', .60], ['M 36,100 L 24,76', .50],
+      ['M 62,100 L 74,70', .35],
+    ],
+    left: [
+      ['M 0,44 L 30,28 L 44,16', .75], ['M 30,28 L 40,18', .45],
+      ['M 0,44 L 26,56 L 48,48', .75], ['M 26,56 L 38,66', .45],
+      ['M 0,56 L 22,70 L 34,80', .60], ['M 0,36 L 24,24', .50],
+      ['M 0,62 L 30,74', .35],
+    ],
+    right: [
+      ['M 100,44 L 70,28 L 56,16', .75], ['M 70,28 L 60,18', .45],
+      ['M 100,44 L 74,56 L 52,48', .75], ['M 74,56 L 62,66', .45],
+      ['M 100,56 L 78,70 L 66,80', .60], ['M 100,36 L 76,24', .50],
+      ['M 100,62 L 70,74', .35],
+    ],
+  };
+  const paths = P[wall]
+    .map(([d, op]) => `<path d="${d}" stroke="rgba(255,255,255,${op})" stroke-width="0.4" fill="none" stroke-linecap="round"/>`)
+    .join('');
+  const div = document.createElement('div');
+  div.className = 'crack-overlay';
+  div.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">${paths}</svg>`;
+  return div;
 }
 
 function clearDeathState() {
   Object.values(edgeFlashEls).forEach(el => {
     el.classList.remove('flash', 'lethal');
   });
+}
+
+function playLogoDefeatAnimation(callback) {
+  const color = logo.style.color || '#fff';
+
+  // Phase 1: rapid shake
+  logo.classList.add('logo-defeat-shake');
+
+  setTimeout(() => {
+    logo.classList.remove('logo-defeat-shake');
+
+    // Phase 2: burst + fragments
+    logo.classList.add('logo-defeat-burst');
+    spawnLogoFragments(color);
+
+    setTimeout(() => {
+      logo.classList.remove('logo-defeat-burst');
+      logo.style.opacity = '0';
+      callback();
+    }, 380);
+  }, 300);
+}
+
+function spawnLogoFragments(color) {
+  const cx = x + LOGO_W / 2;
+  const cy = y + LOGO_H / 2;
+  for (let i = 0; i < 14; i++) {
+    const frag  = document.createElement('div');
+    frag.className = 'logo-fragment';
+    const angle = (i / 14) * Math.PI * 2 + (Math.random() - 0.5) * 0.9;
+    const dist  = 55 + Math.random() * 95;
+    const size  = 3 + Math.random() * 8;
+    frag.style.cssText = `left:${cx - size/2}px;top:${cy - size/2}px;width:${size}px;height:${size}px;background:${color};--tx:${Math.cos(angle)*dist}px;--ty:${Math.sin(angle)*dist}px`;
+    document.body.appendChild(frag);
+    setTimeout(() => frag.remove(), 600);
+  }
 }
 
 // ── Countdown ──
@@ -428,6 +534,8 @@ function startRound() {
   roundLabel.textContent = `ROUND ${currentRound}`;
   updateHPBars();
 
+  logo.classList.remove('logo-defeat-shake', 'logo-defeat-burst');
+  logo.style.opacity = '';
   colorIndex = 0;
   logo.style.color = COLORS[0];
 
@@ -533,7 +641,7 @@ function tick() {
         updateHPBars();
         if (logoHP <= 0) {
           gameActive = false;
-          showMenu('round-clear');
+          playLogoDefeatAnimation(() => showMenu('round-clear'));
           return;
         }
       }
